@@ -4,14 +4,18 @@ const completeBtn = document.getElementById("completeBtn");
 
 let drawing = false;
 let drawingEnabled = true;
-let lines = []; // { points: [], invalid: false }
+
+let lines = [];
 let currentLine = [];
 let currentInvalid = false;
+
+let hasDrawnOnce = false;   // only one draw allowed
+let gameFailed = false;    // 🔴 GLOBAL FAIL FLAG
 
 // =====================
 // IMAGE STATE
 // =====================
-const images = ["4.png","5.png","6.png","7.png","8.png","9.png","10.jpeg"];
+const images = Array.from({ length: 23 }, (_, i) => `${i + 1}.jpeg`);
 let currentImageIndex = 0;
 const bgImage = new Image();
 let imageLoaded = false;
@@ -19,15 +23,15 @@ let imageLoaded = false;
 // =====================
 // TIMER
 // =====================
-const TOTAL_TIME = 2 * 60;
+const TOTAL_TIME = 1 * 60;
 let timeLeft = TOTAL_TIME;
 let timerInterval = null;
-let startTime = null;
 
 // =====================
 // IMAGE LOADER
 // =====================
 function loadImage(i) {
+  imageLoaded = false;
   bgImage.src = images[i];
   bgImage.onload = () => {
     imageLoaded = true;
@@ -62,6 +66,8 @@ function resetGame() {
   lines = [];
   currentLine = [];
   currentInvalid = false;
+  hasDrawnOnce = false;
+  gameFailed = false; // 🔴 reset failure
   resetTimer();
   draw();
 }
@@ -75,7 +81,8 @@ function nextImage() {
   loadImage(currentImageIndex);
 }
 function prevImage() {
-  currentImageIndex = (currentImageIndex - 1 + images.length) % images.length;
+  currentImageIndex =
+    (currentImageIndex - 1 + images.length) % images.length;
   resetGame();
   loadImage(currentImageIndex);
 }
@@ -93,6 +100,7 @@ function startTimer() {
   timerInterval = setInterval(() => {
     timeLeft--;
     updateTime();
+
     if (timeLeft <= 0) {
       forceStop();
       completeBtn.style.display = "none";
@@ -100,18 +108,24 @@ function startTimer() {
     }
   }, 1000);
 }
+
 function resetTimer() {
   clearInterval(timerInterval);
   startTimer();
 }
+
 function updateTime() {
+  const min = Math.floor(timeLeft / 60);
+  const sec = timeLeft % 60;
   document.getElementById("timeDisplay").textContent =
-    "00:" + String(timeLeft).padStart(2, "0");
+    String(min).padStart(2, "0") + ":" + String(sec).padStart(2, "0");
 }
+
 function completeGame() {
   forceStop();
   alert("Completed!");
 }
+
 function forceStop() {
   drawingEnabled = false;
   drawing = false;
@@ -132,14 +146,12 @@ function segmentsIntersect(a,b,c,d) {
 }
 
 function checkIntersection(p1,p2) {
-  // Check with previous lines
   for (const line of lines) {
     const pts = line.points;
     for (let i=1;i<pts.length;i++) {
       if (segmentsIntersect(p1,p2,pts[i-1],pts[i])) return true;
     }
   }
-  // Self intersection
   for (let i=2;i<currentLine.length;i++) {
     if (segmentsIntersect(
       p1,p2,
@@ -157,28 +169,54 @@ function getPos(e) {
   return { x:e.clientX-r.left, y:e.clientY-r.top };
 }
 
-canvas.addEventListener("pointerdown", e=>{
-  if(!drawingEnabled) return;
-  drawing=true;
-  currentLine=[getPos(e)];
-  currentInvalid=false;
+canvas.addEventListener("pointerdown", e => {
+  if (!drawingEnabled) return;
+
+  drawing = true;
+  currentLine = [getPos(e)];
+
+  // 🔴 Second draw attempt = game fail
+  if (hasDrawnOnce) {
+    gameFailed = true;
+    currentInvalid = true;
+
+    // 🔴 Mark ALL previous lines invalid
+    lines.forEach(l => l.invalid = true);
+  } else {
+    currentInvalid = false;
+  }
 });
 
-canvas.addEventListener("pointermove", e=>{
-  if(!drawing || !drawingEnabled) return;
+canvas.addEventListener("pointermove", e => {
+  if (!drawing || !drawingEnabled) return;
+
   const p = getPos(e);
-  const prev = currentLine[currentLine.length-1];
-  if(checkIntersection(prev,p)) currentInvalid=true;
+  const prev = currentLine[currentLine.length - 1];
+
+  if (!currentInvalid && checkIntersection(prev, p)) {
+    currentInvalid = true;
+    gameFailed = true;
+
+    // 🔴 Mark ALL previous lines invalid
+    lines.forEach(l => l.invalid = true);
+  }
+
   currentLine.push(p);
   draw();
 });
 
-canvas.addEventListener("pointerup", ()=>{
-  if(currentLine.length>1){
-    lines.push({ points:[...currentLine], invalid:currentInvalid });
+canvas.addEventListener("pointerup", () => {
+  if (currentLine.length > 1) {
+    lines.push({
+      points: [...currentLine],
+      invalid: gameFailed || currentInvalid
+    });
+    hasDrawnOnce = true;
   }
-  drawing=false;
-  currentLine=[];
+
+  drawing = false;
+  currentLine = [];
+  draw();
 });
 
 // =====================
@@ -186,25 +224,27 @@ canvas.addEventListener("pointerup", ()=>{
 // =====================
 function draw() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  if(imageLoaded) ctx.drawImage(bgImage,0,0,canvas.width,canvas.height);
+  if (imageLoaded) ctx.drawImage(bgImage,0,0,canvas.width,canvas.height);
 
-  ctx.lineWidth=12;
-  ctx.lineCap="round";
+  ctx.lineWidth = 12;
+  ctx.lineCap = "round";
 
-  for(const l of lines){
+  for (const l of lines) {
     ctx.strokeStyle = l.invalid ? "#ff0000" : "#0059ff";
     drawLine(l.points);
   }
 
-  if(currentLine.length>1){
-    ctx.strokeStyle = currentInvalid ? "#ff0000" : "#0059ff";
+  if (currentLine.length > 1) {
+    ctx.strokeStyle = (gameFailed || currentInvalid) ? "#ff0000" : "#0059ff";
     drawLine(currentLine);
   }
 }
 
-function drawLine(pts){
+function drawLine(pts) {
   ctx.beginPath();
-  ctx.moveTo(pts[0].x,pts[0].y);
-  for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y);
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) {
+    ctx.lineTo(pts[i].x, pts[i].y);
+  }
   ctx.stroke();
 }
